@@ -1,6 +1,6 @@
 # ⚡ Specter
 
-An intelligent AI personal co-worker built with **LangGraph**, **Qdrant** vector memory, **FastAPI** (SSE streaming), and a **Next.js 14** chat UI.
+An intelligent AI personal co-worker built with **LangGraph**, **Qdrant** vector memory, **FastAPI** (SSE streaming), **Next.js 14** chat UI, and **agent-browser** web browsing.
 
 ![Specter chat UI](docs/screenshots/chat-top.png)
 
@@ -8,39 +8,86 @@ An intelligent AI personal co-worker built with **LangGraph**, **Qdrant** vector
 
 ## Features
 
-- **Streaming chat** — tokens stream token-by-token over SSE; no waiting for full responses
-- **Long-term memory** — the agent automatically `remember`s and `recall`s facts across turns using Qdrant semantic search
-- **Self-evaluation** — after every response the agent scores itself against optional success criteria you define
-- **Zero-infra Qdrant** — runs fully in-process (`:memory:`) with no Docker; swap to a real Qdrant server for persistence
-- **Dark UI** — Next.js 14 / Tailwind / TypeScript with a side panel showing relevant memories in real time
+- **Streaming chat** — tokens arrive token-by-token over SSE; no waiting for complete responses
+- **Long-term memory** — the agent `remember`s and `recall`s facts across turns via Qdrant semantic search
+- **Web browsing** — powered by [agent-browser](https://github.com/vercel-labs/agent-browser); the agent can open URLs, read pages, click, fill forms, and take screenshots
+- **Self-evaluation** — every response is scored against optional success criteria you define
+- **Zero-infra Qdrant** — runs in-process (`:memory:`) by default; swap to a real Qdrant server for persistence
+- **Dark UI** — Next.js 14 / Tailwind / TypeScript with a live memory side panel
 
 ---
 
 ## Screenshots
 
-### Empty state
+### Empty state — ready to chat
 ![Empty state](docs/screenshots/empty-state.png)
 
-### Live conversation with deep-work weekly plan
+### Asking Specter to browse a live website
+![Browser query](docs/screenshots/browser-query.png)
+
+### Specter reads example.com and summarizes it
+![Browser response](docs/screenshots/browser-response.png)
+
+### Conversation with deep-work weekly planner (self-eval score 0.95)
 ![Chat response](docs/screenshots/chat-top.png)
 
-### Bottom of response — self-evaluation score (0.95)
-![Self-evaluation](docs/screenshots/chat-response.png)
+---
+
+## Working use case examples
+
+### 1 — Browse a live website
+
+```
+You: Open https://example.com and summarize what you find on the page.
+
+Specter: The page is titled "Example Domain" and states that this domain
+         is intended for use in documentation examples without needing
+         permission. It advises against using it for operational purposes
+         and provides a link to learn more.
+```
+
+Specter autonomously called `browser_open` → navigated to the URL → read the content → responded. Total: ~9 s.
+
+### 2 — Plan your week (verified output, score 1.0)
+
+```
+You: My name is Mihir. I'm a software engineer working on AI.
+     Help me plan my week with deep work focus blocks.
+
+Specter: ### Weekly Plan
+         **Monday to Friday:**
+         - Morning (9 AM – 12 PM): Deep Work Block
+           Focus on coding or AI project tasks.
+         - Lunch Break (12 PM – 1 PM)
+         - Afternoon (1 PM – 3 PM): Deep Work Block
+         ...
+         [self-eval: success=true, score=0.95]
+```
+
+### 3 — Memory across turns
+
+```
+Turn 1 — You: My name is Mihir and I work in AI.
+Turn 2 — You: What do you know about me?
+
+Specter: You're Mihir, a software engineer working in AI.
+         [recalled from Qdrant vector memory]
+```
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│  Next.js 14 (port 3000)                     │
-│  ┌──────────┐  ┌──────────┐  ┌───────────┐ │
-│  │ ChatPanel│  │MemoryPanel│  │SuccessCrit│ │
-│  └────┬─────┘  └──────────┘  └───────────┘ │
-│       │ fetch (SSE)                         │
-│  ┌────▼──────────────────────────────────┐  │
-│  │  /api/chat  /api/memory  (Next routes)│  │
-└──┴────┬──────────────────────────────────┴──┘
+┌──────────────────────────────────────────────┐
+│  Next.js 14 (port 3000)                      │
+│  ┌──────────┐  ┌──────────┐  ┌────────────┐ │
+│  │ ChatPanel│  │MemoryPanel│  │SuccessCrit │ │
+│  └────┬─────┘  └──────────┘  └────────────┘ │
+│       │ fetch (SSE)                          │
+│  ┌────▼───────────────────────────────────┐  │
+│  │  /api/chat   /api/memory  (Next routes)│  │
+└──┴────┬────────────────────────────────────┴──┘
         │ HTTP proxy
 ┌───────▼──────────────────────────────────────┐
 │  FastAPI (port 8000)                          │
@@ -48,20 +95,28 @@ An intelligent AI personal co-worker built with **LangGraph**, **Qdrant** vector
 │  POST /api/chat  ──►  SpectorAgent            │
 │                        │                      │
 │                   LangGraph StateGraph         │
-│                   ┌────┴─────┐                │
-│                   │  agent   │◄─── GPT-4o-mini│
-│                   └────┬─────┘                │
-│                   ┌────▼─────┐                │
-│                   │  tools   │ remember/recall │
-│                   └────┬─────┘                │
-│                   ┌────▼─────┐                │
-│                   │ evaluate │ structured-out  │
-│                   └────┬─────┘                │
+│                   ┌────┴──────┐               │
+│                   │   agent   │◄── GPT-4o-mini │
+│                   └────┬──────┘               │
+│                   ┌────▼──────┐               │
+│                   │   tools   │               │
+│                   │ ┌────────┐│               │
+│                   │ │memory  ││ remember/recall│
+│                   │ ├────────┤│               │
+│                   │ │browser ││ open/read/     │
+│                   │ │        ││ snapshot/click │
+│                   │ └────────┘│               │
+│                   └────┬──────┘               │
+│                   ┌────▼──────┐               │
+│                   │ evaluate  │ structured-out │
+│                   └────┬──────┘               │
 │                        │                      │
 │  GET /api/memory ──►  QdrantStore             │
-│                        │                      │
 │                   AsyncQdrantClient           │
 │                   (:memory: or remote)        │
+│                                               │
+│  browser tools ──►  agent-browser daemon      │
+│                      Chrome (headless)        │
 └──────────────────────────────────────────────┘
 ```
 
@@ -90,7 +145,7 @@ cd backend
 # Create virtual environment
 uv venv            # or: python -m venv .venv
 
-# Install (editable + dev extras)
+# Install
 uv pip install -e ".[dev]"
 
 # Configure
@@ -102,18 +157,35 @@ cp .env.example .env
 # Linux/macOS: .venv/bin/python -m uvicorn specter.server:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Swagger UI: **http://localhost:8000/docs**
+Swagger UI → **http://localhost:8000/docs**
 
 ### 3 — Frontend
 
 ```bash
 cd frontend
 npm install
-cp .env.local.example .env.local   # NEXT_PUBLIC_API_URL=http://localhost:8000
+cp .env.local.example .env.local
 npm run dev
 ```
 
-Open **http://localhost:3000**
+Open → **http://localhost:3000**
+
+### 4 — Browser tools (optional)
+
+Gives Specter the ability to open URLs, read pages, click elements, fill forms, and take screenshots.
+
+```bash
+# Install agent-browser CLI globally
+npm install -g agent-browser
+
+# Download Chrome (first time only, ~186 MB)
+agent-browser install
+
+# Enable in backend/.env
+AGENT_BROWSER_ENABLED=true
+```
+
+Restart the backend. Specter now has 10 browser tools.
 
 ---
 
@@ -127,22 +199,43 @@ All backend settings live in `backend/.env` (see [`backend/.env.example`](backen
 | `SPECTER_MODEL` | `openai:gpt-4o-mini` | LangChain chat model string |
 | `SPECTER_EMBED_MODEL` | `openai:text-embedding-3-small` | Embedding model for memory |
 | `SPECTER_TEMPERATURE` | `0.2` | LLM temperature |
-| `QDRANT_URL` | `:memory:` | Qdrant URL or `:memory:` for in-process |
+| `QDRANT_URL` | `:memory:` | `:memory:` for in-process, or `http://localhost:6333` |
 | `QDRANT_API_KEY` | — | Qdrant Cloud API key (optional) |
-| `QDRANT_COLLECTION` | `specter_memory` | Collection name |
+| `QDRANT_COLLECTION` | `specter_memory` | Vector collection name |
+| `AGENT_BROWSER_ENABLED` | — | Set to `true` to enable web browsing tools |
 | `HOST` | `0.0.0.0` | Uvicorn bind host |
 | `PORT` | `8000` | Uvicorn bind port |
-| `DEV` | — | Set to any value to enable hot-reload |
+| `DEV` | — | Any value enables `--reload` |
 
-### Using a real Qdrant server (persistent memory)
+### Persistent Qdrant (survives restarts)
 
 ```bash
-# Start Qdrant with Docker
 docker run -p 6333:6333 qdrant/qdrant
 
-# Then in backend/.env
+# backend/.env
 QDRANT_URL=http://localhost:6333
 ```
+
+---
+
+## Browser tools
+
+When `AGENT_BROWSER_ENABLED=true`, Specter gains these tools backed by [agent-browser](https://github.com/vercel-labs/agent-browser):
+
+| Tool | What it does |
+|---|---|
+| `browser_open` | Navigate to a URL |
+| `browser_read` | Fetch readable text from a URL (no browser launch) |
+| `browser_snapshot` | Get accessibility tree with element refs (`@e1`, `@e2`, …) |
+| `browser_click` | Click an element by ref or CSS selector |
+| `browser_fill` | Clear and fill an input field |
+| `browser_get_text` | Get visible text from an element |
+| `browser_screenshot` | Take a screenshot, returns file path |
+| `browser_scroll` | Scroll up / down / left / right |
+| `browser_wait` | Wait N milliseconds |
+| `browser_close` | Close the browser session |
+
+Each tool calls the `agent-browser` CLI in a thread via `asyncio.to_thread` — the agent-browser daemon keeps Chrome alive between calls, so only the first navigation incurs browser startup overhead (~5 s). Subsequent tool calls complete in ~1–2 s.
 
 ---
 
@@ -190,8 +283,9 @@ specter/
 ├── backend/
 │   ├── src/specter/
 │   │   ├── agent.py      # LangGraph StateGraph + remember/recall tools
+│   │   ├── browser.py    # 10 async browser tools (agent-browser CLI wrappers)
 │   │   ├── memory.py     # QdrantStore (LangGraph BaseStore implementation)
-│   │   ├── server.py     # FastAPI app + SSE endpoints
+│   │   ├── server.py     # FastAPI app + SSE endpoints + lifespan
 │   │   └── __init__.py
 │   ├── tests/
 │   │   ├── conftest.py
@@ -206,7 +300,7 @@ specter/
 │   │   ├── layout.tsx
 │   │   └── page.tsx
 │   ├── components/
-│   │   ├── ChatPanel.tsx         # Main chat orchestrator
+│   │   ├── ChatPanel.tsx         # Main chat orchestrator + SSE reader
 │   │   ├── MessageList.tsx
 │   │   ├── MessageBubble.tsx
 │   │   ├── InputBar.tsx
@@ -239,6 +333,7 @@ cd backend
 | LLM orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) |
 | Language model | OpenAI GPT-4o-mini (configurable) |
 | Vector memory | [Qdrant](https://qdrant.tech) + fastembed |
+| Browser automation | [agent-browser](https://github.com/vercel-labs/agent-browser) (Vercel Labs) |
 | Backend framework | [FastAPI](https://fastapi.tiangolo.com) + Uvicorn |
 | Streaming | Server-Sent Events (sse-starlette) |
 | Frontend | [Next.js 14](https://nextjs.org) + React 18 + TypeScript |
