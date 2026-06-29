@@ -56,6 +56,17 @@ _state = _AppState()
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialise the agent on startup; close the Qdrant client on shutdown."""
+    import shutil
+
+    browser_tools: list = []
+    if os.environ.get("AGENT_BROWSER_ENABLED", "").lower() in ("1", "true", "yes"):
+        if shutil.which("agent-browser"):
+            from specter.browser import BROWSER_TOOLS
+            browser_tools = BROWSER_TOOLS
+            print(f"agent-browser: {len(browser_tools)} browser tools enabled", flush=True)
+        else:
+            print("AGENT_BROWSER_ENABLED=true but agent-browser not on PATH", flush=True)
+
     agent, store = await create_specter(
         model=os.environ.get("SPECTER_MODEL", "openai:gpt-4o-mini"),
         embed_model=os.environ.get(
@@ -67,6 +78,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "QDRANT_COLLECTION", "specter_memory"
         ),
         temperature=float(os.environ.get("SPECTER_TEMPERATURE", "0.2")),
+        extra_tools=browser_tools,
     )
     _state.agent = agent
     _state.store = store

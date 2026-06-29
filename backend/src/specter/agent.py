@@ -150,6 +150,7 @@ async def create_specter(
     qdrant_collection: str = "specter_memory",
     embed_dims: int = 1536,
     temperature: float = 0.2,
+    extra_tools: list | None = None,
 ) -> tuple["SpectorAgent", QdrantStore]:
     """Async factory: creates the Qdrant store and LangGraph agent.
 
@@ -196,7 +197,7 @@ async def create_specter(
     )
 
     llm = init_chat_model(model, temperature=temperature)
-    graph = _build_graph(llm, store)
+    graph = _build_graph(llm, store, extra_tools=extra_tools or [])
     agent = SpectorAgent(graph=graph, store=store)
     return agent, store
 
@@ -215,7 +216,7 @@ and steer toward fulfilling it.
 Be concise, clear, and action-oriented."""
 
 
-def _build_graph(llm: Any, store: QdrantStore) -> Any:
+def _build_graph(llm: Any, store: QdrantStore, extra_tools: list | None = None) -> Any:
     """Construct and compile the LangGraph StateGraph."""
 
     # ------------------------------------------------------------------ tools
@@ -252,7 +253,7 @@ def _build_graph(llm: Any, store: QdrantStore) -> Any:
             lines.append(f"[{r.key}]{score_str}: {val}")
         return "\n".join(lines)
 
-    tools = [remember, recall]
+    tools = [remember, recall] + (extra_tools or [])
     llm_with_tools = llm.bind_tools(tools)
 
     # ------------------------------------------------------------------ nodes
@@ -261,6 +262,9 @@ def _build_graph(llm: Any, store: QdrantStore) -> Any:
         system = SystemMessage(content=_SYSTEM_PROMPT)
         response = await llm_with_tools.ainvoke([system] + state["messages"])
         return {"messages": [response]}
+
+    # Names of memory tools that need session_id auto-injected
+    _memory_tool_names = {"remember", "recall"}
 
     async def run_tools(state: AgentState) -> dict:
         """Execute any tool calls requested by the model."""
@@ -271,8 +275,9 @@ def _build_graph(llm: Any, store: QdrantStore) -> Any:
         for tc in getattr(last, "tool_calls", []):
             fn_name = tc["name"]
             fn_args = dict(tc["args"])
-            # Inject session_id automatically
-            fn_args.setdefault("session_id", state["session_id"])
+            # Only inject session_id into memory tools that explicitly declare it
+            if fn_name in _memory_tool_names:
+                fn_args.setdefault("session_id", state["session_id"])
             tool_map = {t.name: t for t in tools}
             if fn_name in tool_map:
                 result = await tool_map[fn_name].ainvoke(fn_args)
