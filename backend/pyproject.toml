@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=42", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "specter"
+version = "1.0.0"
+description = "Specter — LangGraph agent with Qdrant memory and FastAPI serving"
+requires-python = ">=3.11"
+dependencies = [
+    # LangChain / LangGraph
+    "langchain>=0.3",
+    "langchain-openai>=0.2",
+    "langgraph>=0.2",
+    # Qdrant
+    "qdrant-client[fastembed]>=1.9",
+    # FastAPI + ASGI
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "sse-starlette>=2.1",
+    # Utilities
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "anyio[trio]>=4",
+]
+
+[project.scripts]
+specter-server = "specter.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
